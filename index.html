@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>PitchIQ - Half-Turn Decision Trainer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b1a10;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      touch-action: none;
+    }
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    #hud {
+      position: absolute;
+      top: env(safe-area-inset-top, 16px);
+      left: 16px;
+      right: 16px;
+      display: flex;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .hud-pill {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .hud-pill span {
+      color: #10b981;
+      font-size: 15px;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+    #instruction-card {
+      position: absolute;
+      bottom: 24px;
+      background: rgba(11, 26, 16, 0.9);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #e2e8f0;
+      padding: 10px 18px;
+      border-radius: 12px;
+      font-size: 12px;
+      text-align: center;
+      pointer-events: none;
+      max-width: 90%;
+    }
+    #start-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(11, 26, 16, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      padding: 24px;
+      text-align: center;
+    }
+    #start-overlay h1 {
+      color: #ffffff;
+      font-size: 26px;
+      margin-bottom: 8px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    #start-overlay h1 span {
+      color: #10b981;
+    }
+    #start-overlay p {
+      color: #94a3b8;
+      font-size: 14px;
+      max-width: 320px;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      color: #34d399;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .btn-start {
+      background: #10b981;
+      color: #064e3b;
+      font-weight: 700;
+      font-size: 16px;
+      padding: 14px 32px;
+      border-radius: 30px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
+      transition: transform 0.1s ease;
+    }
+    .btn-start:active {
+      transform: scale(0.96);
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <div id="hud">
+      <div class="hud-pill">IQ SCORE: <span id="score-val">0</span></div>
+      <div class="hud-pill">LATENCY: <span id="latency-val">0ms</span></div>
+    </div>
+
+    <div id="instruction-card">
+      Receive on the <b>Half-Turn</b>. Tap the open teammate before the defender closes your passing lane!
+    </div>
+
+    <div id="start-overlay">
+      <div class="badge">TACTICAL SCANNING BETA</div>
+      <h1>Pitch<span>IQ</span></h1>
+      <p>Train sub-second decision making on the ball. Body angled 45° to see forward options before receiving.</p>
+      <button class="btn-start" id="btn-play">START SESSION</button>
+    </div>
+
+    <canvas id="pitchCanvas"></canvas>
+  </div>
+
+  <script>
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+      playKick() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.7, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.08);
+      }
+      playSuccess() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        [440, 554.37, 659.25].forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.05);
+          gain.gain.setValueAtTime(0.2, now + idx * 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.05 + 0.2);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.05);
+          osc.stop(now + idx * 0.05 + 0.2);
+        });
+      }
+      playError() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(140, this.ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(80, this.ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.15);
+      }
+    }
+
+    const sound = new SoundEngine();
+
+    const canvas = document.getElementById('pitchCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const scoreVal = document.getElementById('score-val');
+    const latencyVal = document.getElementById('latency-val');
+    const startOverlay = document.getElementById('start-overlay');
+    const btnPlay = document.getElementById('btn-play');
+
+    let width = 0;
+    let height = 0;
+    let score = 0;
+    let isRunning = false;
+    let roundStartTime = 0;
+
+    let player = { x: 0, y: 0, radius: 18, angle: -Math.PI / 4 };
+    let ball = { x: 0, y: 0, targetX: 0, targetY: 0, radius: 8, moving: false, progress: 0 };
+    let teammates = [];
+    let defenders = [];
+    let ripples = [];
+    let feedbackTexts = [];
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+      if (player.x === 0) setupScenario();
+    }
+    window.addEventListener('resize', resize);
+
+    function setupScenario() {
+      player.x = width * 0.5;
+      player.y = height * 0.65;
+      player.angle = -Math.PI / 4;
+      
+      ball.x = player.x;
+      ball.y = player.y;
+      ball.moving = false;
+
+      teammates = [
+        { id: 1, x: width * 0.22, y: height * 0.35, radius: 16, open: false, label: 'L-Wing' },
+        { id: 2, x: width * 0.50, y: height * 0.28, radius: 16, open: false, label: 'Striker' },
+        { id: 3, x: width * 0.78, y: height * 0.36, radius: 16, open: true, label: 'R-Wing' }
+      ];
+
+      const openIdx = Math.floor(Math.random() * 3);
+      teammates.forEach((tm, i) => {
+        tm.open = (i === openIdx);
+      });
+
+      defenders = [];
+      teammates.forEach(tm => {
+        if (!tm.open) {
+          const dx = tm.x - player.x;
+          const dy = tm.y - player.y;
+          defenders.push({
+            x: player.x + dx * 0.65 + (Math.random() * 20 - 10),
+            y: player.y + dy * 0.65 + (Math.random() * 20 - 10),
+            radius: 16,
+            pressing: true
+          });
+        }
+      });
+
+      defenders.push({
+        x: player.x,
+        y: player.y + 110,
+        radius: 16,
+        pressing: true,
+        rushSpeed: 1.4
+      });
+
+      roundStartTime = performance.now();
+    }
+
+    function handleTap(clientX, clientY) {
+      if (!isRunning) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+
+      const reactionTime = Math.round(performance.now() - roundStartTime);
+      latencyVal.innerText = `${reactionTime}ms`;
+
+      ripples.push({ x, y, radius: 5, maxRadius: 35, alpha: 1.0 });
+      sound.playKick();
+
+      let hitTeammate = null;
+      for (let tm of teammates) {
+        const dist = Math.hypot(tm.x - x, tm.y - y);
+        if (dist < tm.radius + 26) {
+          hitTeammate = tm;
+          break;
+        }
+      }
+
+      if (hitTeammate) {
+        ball.moving = true;
+        ball.targetX = hitTeammate.x;
+        ball.targetY = hitTeammate.y;
+        ball.progress = 0;
+
+        if (hitTeammate.open) {
+          score += 100;
+          sound.playSuccess();
+          feedbackTexts.push({
+            text: `GREAT VISION (+100) ${reactionTime}ms`,
+            x: width * 0.5,
+            y: height * 0.5,
+            color: '#34d399',
+            alpha: 1.0
+          });
+        } else {
+          sound.playError();
+          feedbackTexts.push({
+            text: `INTERCEPTED! LANE COVERED`,
+            x: width * 0.5,
+            y: height * 0.5,
+            color: '#f87171',
+            alpha: 1.0
+          });
+        }
+        scoreVal.innerText = score;
+        setTimeout(setupScenario, 800);
+      } else {
+        feedbackTexts.push({
+          text: `SCAN FASTER!`,
+          x,
+          y: y - 20,
+          color: '#fbbf24',
+          alpha: 1.0
+        });
+      }
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handleTap(e.clientX, e.clientY);
+    }, { passive: false });
+
+    function drawPitch() {
+      ctx.fillStyle = '#0f291e';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+      const stripeCount = 8;
+      const stripeHeight = height / stripeCount;
+      for (let i = 0; i < stripeCount; i += 2) {
+        ctx.fillRect(0, i * stripeHeight, width, stripeHeight);
+      }
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 2;
+
+      ctx.strokeRect(16, 16, width - 32, height - 32);
+
+      ctx.beginPath();
+      ctx.arc(width * 0.5, height * 0.5, width * 0.22, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(16, height * 0.5);
+      ctx.lineTo(width - 16, height * 0.5);
+      ctx.stroke();
+    }
+
+    function drawVisionCone(x, y, angle) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+
+      const grad = ctx.createRadialGradient(0, 0, 10, 0, 0, 180);
+      grad.addColorStop(0, 'rgba(52, 211, 153, 0.22)');
+      grad.addColorStop(1, 'rgba(52, 211, 153, 0.0)');
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, 180, -Math.PI / 4, Math.PI / 4);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function render() {
+      drawPitch();
+
+      drawVisionCone(player.x, player.y, player.angle);
+
+      teammates.forEach(tm => {
+        ctx.beginPath();
+        ctx.arc(tm.x, tm.y, tm.radius + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = tm.open ? 'rgba(52, 211, 153, 0.6)' : 'rgba(255, 255, 255, 0.15)';
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.arc(tm.x, tm.y, tm.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#3b82f6';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(tm.label, tm.x, tm.y + tm.radius + 14);
+      });
+
+      defenders.forEach(df => {
+        if (df.rushSpeed) {
+          df.y -= df.rushSpeed * 0.3;
+        }
+
+        ctx.beginPath();
+        ctx.arc(df.x, df.y, df.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(df.x, df.y, df.radius + 8, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.25)';
+        ctx.stroke();
+      });
+
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(player.x, player.y);
+      ctx.lineTo(player.x + Math.cos(player.angle) * 24, player.y + Math.sin(player.angle) * 24);
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      if (ball.moving) {
+        ball.progress += 0.08;
+        ball.x += (ball.targetX - ball.x) * 0.15;
+        ball.y += (ball.targetY - ball.y) * 0.15;
+      }
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#0f172a';
+      ctx.stroke();
+
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        r.radius += 2;
+        r.alpha -= 0.05;
+        if (r.alpha <= 0) {
+          ripples.splice(i, 1);
+          continue;
+        }
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(52, 211, 153, ${r.alpha})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      for (let i = feedbackTexts.length - 1; i >= 0; i--) {
+        const fb = feedbackTexts[i];
+        fb.y -= 0.6;
+        fb.alpha -= 0.02;
+        if (fb.alpha <= 0) {
+          feedbackTexts.splice(i, 1);
+          continue;
+        }
+        ctx.save();
+        ctx.globalAlpha = fb.alpha;
+        ctx.font = '700 16px -apple-system, sans-serif';
+        ctx.fillStyle = fb.color;
+        ctx.textAlign = 'center';
+        ctx.fillText(fb.text, fb.x, fb.y);
+        ctx.restore();
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    btnPlay.addEventListener('click', () => {
+      sound.init();
+      startOverlay.style.display = 'none';
+      isRunning = true;
+      resize();
+      setupScenario();
+    });
+
+    resize();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
